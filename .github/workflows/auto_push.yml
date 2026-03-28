@@ -14,6 +14,6 @@ jobs:
           for f in README.md CLAUDE.md scripts/setup_rpi5.sh \
                    firmware/esp32-s3/platformio.ini \
                    firmware/esp32-s3/src/main.cpp \
-                   flows/n8n/mqtt_to_influxdb.json; do
+                   flows/n8n/mqtt_to_influxdb_v2.json; do
             [ -f "$f" ] && echo "✓ $f" || (echo "✗ FALTA: $f" && exit 1)
           done
