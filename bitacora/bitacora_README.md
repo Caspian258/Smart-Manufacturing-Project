@@ -61,7 +61,7 @@
 
 ## PENDIENTES — Fase 1 (semanas 1-6)
 - [x] Flashear ESP32-S3 y verificar mensajes MQTT llegando al RPi5 ✅
-- [ ] Importar flujo `flows/n8n/mqtt_to_influxdb.json` en n8n
+- [x] Importar flujo `flows/n8n/mqtt_to_influxdb.json` en n8n ✅
 - [ ] Construir dashboard Node-RED con KPIs (energía, OEE, trazabilidad)
 - [ ] Conectar SCT-013 al ESP32-S3 (diagrama en docs/)
 - [ ] Probar RC522 RFID — Pasaporte Digital primera pieza
@@ -82,6 +82,25 @@
 ## HISTORIAL DE VERSIONES
 | Versión | Fecha | Descripción |
 |---------|-------|-------------|
+| 0.4.0 | 2026-03-28 | Pipeline completo ESP32 → MQTT → n8n → InfluxDB |
 | 0.3.0 | 2026-03-28 | Primer dato MQTT recibido — ESP32 → RPi5 operativo |
 | 0.2.0 | 2026-03-28 | Stack RPi5 completamente operativo |
 | 0.1.0 | 2026-03-28 | Estructura inicial del repositorio |
+
+---
+
+## ENTRADA #004 — Pipeline completo: ESP32 → MQTT → n8n → InfluxDB
+- **Fecha**: 2026-03-28
+- **Estado**: ✅ Completado — HITO FASE 1
+- **Acción**: Flujo n8n importado y activo. Datos del ESP32-S3 ahora persisten en InfluxDB automáticamente.
+
+### Estado del pipeline extremo a extremo
+| Componente | Estado |
+|-----------|--------|
+| ESP32-S3 publicando datos | ✅ cada 5s |
+| MQTT Broker | ✅ recibiendo |
+| n8n workflow | ✅ procesando |
+| InfluxDB guardando | ✅ |
+
+### Próximo paso
+- Configurar dashboard Grafana con datasource InfluxDB para visualizar KPIs en tiempo real
