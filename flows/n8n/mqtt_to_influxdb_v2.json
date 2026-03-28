@@ -1,0 +1,231 @@
+{
+  "name": "Smart Manufacturing — MQTT to InfluxDB",
+  "nodes": [
+    {
+      "parameters": {
+        "topics": [
+          {
+            "topic": "cima/machines/+/energy"
+          },
+          {
+            "topic": "cima/machines/+/cycle"
+          },
+          {
+            "topic": "cima/rfid/scan"
+          },
+          {
+            "topic": "cima/system/heartbeat"
+          }
+        ],
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "MQTT Trigger",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "mqtt": {
+          "id": "mqtt-cred-01",
+          "name": "MQTT RPi5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const topic = $input.item.json.topic || '';\nlet data;\ntry {\n  data = JSON.parse($input.item.json.message || '{}');\n} catch(e) {\n  data = { raw: $input.item.json.message };\n}\n\ndata._topic = topic;\ndata._plant = topic.startsWith('cima') ? 'cima' : 'celda3105';\ndata._type = topic.split('/').pop();\ndata._receivedAt = new Date().toISOString();\n\nreturn { json: data };"
+      },
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
+      "name": "Parsear mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-01",
+              "leftValue": "={{ $json._type }}",
+              "rightValue": "energy",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0003-0003-0003-000000000003",
+      "name": "Es dato de energía?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8086/api/v2/write",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "text/plain; charset=utf-8"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "org",
+              "value": "smart-manufacturing"
+            },
+            {
+              "name": "bucket",
+              "value": "sensor-data"
+            },
+            {
+              "name": "precision",
+              "value": "ms"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "=cima_energy,machine={{ $json.machine_id || 'unknown' }} power_w={{ $json.power_w || 0 }},irms_a={{ $json.irms_a || 0 }},energy_kwh={{ $json.energy_kwh || 0 }},simulated={{ $json.simulated ? 1 : 0 }} {{ Date.now() }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
+      "name": "Guardar en InfluxDB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "influx-cred-01",
+          "name": "InfluxDB Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-02",
+              "leftValue": "={{ $json.power_w }}",
+              "rightValue": 3000,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
+      "name": "Anomalía de consumo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn {\n  json: {\n    alert: 'HIGH_POWER',\n    severity: d.power_w > 5000 ? 'critical' : 'warning',\n    machine: d.machine_id,\n    power_w: d.power_w,\n    message: `Consumo anómalo en ${d.machine_id}: ${d.power_w}W`,\n    ts: new Date().toISOString()\n  }\n};"
+      },
+      "id": "a1b2c3d4-0006-0006-0006-000000000006",
+      "name": "Generar alerta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 160]
+    }
+  ],
+  "connections": {
+    "MQTT Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parsear mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear mensaje": {
+      "main": [
+        [
+          {
+            "node": "Es dato de energía?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es dato de energía?": {
+      "main": [
+        [
+          {
+            "node": "Guardar en InfluxDB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Guardar en InfluxDB": {
+      "main": [
+        [
+          {
+            "node": "Anomalía de consumo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anomalía de consumo?": {
+      "main": [
+        [
+          {
+            "node": "Generar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-28T00:00:00.000Z",
+  "versionId": "v1"
+}
