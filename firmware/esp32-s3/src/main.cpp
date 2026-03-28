@@ -1,384 +1,312 @@
 /*
- * firmware_cima_iot.ino
- * Agente IoT — Planta 1: CIMA
- * Hardware: ESP32-S3 + SCT-013 (sensor corriente AC) + RC522 (RFID)
+ * main.cpp — IoT Gateway Planta 1: CIMA
+ * Modo: SIMULACIÓN — funciona sin circuito físico conectado
  *
- * Función:
- *   - Mide consumo eléctrico por ciclo de máquina (taladro/torno/fresa)
- *   - Lee RFID de piezas para trazabilidad (Pasaporte Digital)
- *   - Publica datos vía MQTT al broker en Raspberry Pi 5
- *
- * Topics MQTT publicados:
- *   cima/machines/{machine_id}/energy  → {"kWh": 0.12, "W": 1200, "ts": "..."}
- *   cima/machines/{machine_id}/cycle   → {"start": "...", "end": "...", "part_id": "..."}
- *   cima/rfid/scan                     → {"part_id": "ABC123", "machine": "fresadora", "ts": "..."}
- *   cima/system/heartbeat              → {"ip": "...", "rssi": -65, "uptime": 3600}
+ * Publica datos simulados de energía cada 5 segundos via MQTT.
+ * Cuando tengas el circuito (SCT-013 + RC522), cambiar:
+ *   #define SIMULATION_MODE 0
  */
 
+#include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <SPI.h>
-#include <MFRC522.h>
+#include <ArduinoOTA.h>
 #include <time.h>
 
-// ─── Configuración WiFi y MQTT ─────────────────────────────────────────────
-// Valores inyectados desde .env vía scripts/inject_env.py.
-// #ifndef actúa como fallback si no existe .env.
-#ifndef WIFI_SSID
-#  define WIFI_SSID     "Totalplay-3CAF"
-#endif
-#ifndef WIFI_PASSWORD
-#  define WIFI_PASSWORD "3CAF3FT8723uQsTb"
-#endif
-#ifndef MQTT_BROKER
-#  define MQTT_BROKER   "10.90.159.4"
-#endif
-#ifndef MQTT_PORT
-#  define MQTT_PORT     1883
-#endif
-#ifndef MQTT_USER
-#  define MQTT_USER     "esp32_cima"
-#endif
-#ifndef MQTT_PASSWORD
-#  define MQTT_PASSWORD "Esp32Cima!"
-#endif
-#ifndef MACHINE_ID
-#  define MACHINE_ID    "fresadora"
+#include "config.h"
+
+// ─── Modo simulación ─────────────────────────────────────────────────────────
+// 1 = datos simulados (sin circuito físico)
+// 0 = datos reales    (con SCT-013 y RC522)
+#define SIMULATION_MODE 1
+
+#if SIMULATION_MODE == 0
+#include <SPI.h>
+#include <MFRC522.h>
+MFRC522 rfid(PIN_RFID_SS, PIN_RFID_RST);
 #endif
 
-const char* CLIENT_ID = "esp32-cima-planta1";
+// ─── Clientes globales ────────────────────────────────────────────────────────
+WiFiClient   wifiClient;
+PubSubClient mqtt(wifiClient);
 
-// ─── Identificación de máquina ─────────────────────────────────────────────
-const char* MACHINE_NAME = "Torno ROMI";
+// ─── Estado del ciclo ────────────────────────────────────────────────────────
+struct CycleState {
+  bool     active    = false;
+  uint32_t startMs   = 0;
+  float    energyWh  = 0.0f;
+  String   partId    = "";
+};
+CycleState cycle;
 
-// ─── Pines Hardware ────────────────────────────────────────────────────────
-// SCT-013 (sensor de corriente AC) — conectado a ADC a través de burden resistor
-const int SCT_PIN         = 36;   // ADC1_CH0 — GPIO36 (solo lectura)
-const int BURDEN_RESISTOR = 33;   // Ohms — ajustar según tu SCT-013
-const int SCT_TURNS       = 100;  // Relación de transformación del SCT-013-100A
+uint32_t lastPublish   = 0;
+uint32_t lastHeartbeat = 0;
 
-// RFID RC522
-const int RFID_SS_PIN     = 5;
-const int RFID_RST_PIN    = 27;
-
-// LED de estado (built-in en ESP32-S3)
-const int LED_PIN         = 48;
-
-// Botón inicio/fin de ciclo (opcional, conectar a GND con pull-up)
-const int CYCLE_BTN_PIN   = 0;
-
-// ─── Variables globales ────────────────────────────────────────────────────
-WiFiClient espClient;
-PubSubClient mqtt(espClient);
-MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
-
-// Estado del ciclo
-bool     cycleActive    = false;
-unsigned long cycleStart = 0;
-String   currentPartId  = "";
-float    cycleEnergyWh  = 0.0;
-
-// Muestreo de corriente
-const int   SAMPLES         = 1480;   // ~1 ciclo AC a 60Hz con 24kHz ADC
-const float VCC             = 3.3;
-const float ADC_RESOLUTION  = 4096.0;
-const float ICAL            = 90.9;   // Factor de calibración — ajustar con medidor real
-
-unsigned long lastMqttPublish  = 0;
-unsigned long lastHeartbeat    = 0;
-const long    PUBLISH_INTERVAL = 5000;   // ms entre publicaciones de energía
-const long    HEARTBEAT_INTERVAL = 30000; // ms entre heartbeats
-
-// ─── Funciones auxiliares ──────────────────────────────────────────────────
-
-String getTimestamp() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return "1970-01-01T00:00:00Z";
+// ─── Utilidades ──────────────────────────────────────────────────────────────
+String isoTimestamp() {
+  struct tm t;
+  if (!getLocalTime(&t)) return "1970-01-01T00:00:00Z";
   char buf[25];
-  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &t);
   return String(buf);
 }
 
-void ledBlink(int times, int ms = 100) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(ms);
-    digitalWrite(LED_PIN, LOW);
-    delay(ms);
+void ledBlink(uint8_t times, uint16_t ms = 100) {
+  for (uint8_t i = 0; i < times; i++) {
+    digitalWrite(PIN_LED, HIGH); delay(ms);
+    digitalWrite(PIN_LED, LOW);  delay(ms);
   }
 }
 
-// ─── Medición de corriente RMS con SCT-013 ────────────────────────────────
+// ─── Datos simulados ─────────────────────────────────────────────────────────
+#if SIMULATION_MODE == 1
 struct PowerReading {
-  float irms;   // Corriente RMS (A)
-  float watt;   // Potencia activa estimada (W)
-  float kwh;    // Energía acumulada (kWh) en este intervalo
+  float irmsA;
+  float powerW;
+  float energyKwh;
 };
 
 PowerReading measurePower() {
-  long sumSq = 0;
-  int offsetI = 2048;  // Offset ADC para señal AC centrada
+  // Simular variación realista de una fresadora industrial
+  static float base = 1200.0f;
+  float noise = (random(-200, 200)) / 10.0f;
+  float power = base + noise;
+  float irms  = power / (220.0f * 0.85f);
+  float energy = power * (PUBLISH_INTERVAL_MS / 1000.0f) / 3600000.0f;
+  return { irms, power, energy };
+}
 
-  // Acumular muestras
-  for (int n = 0; n < SAMPLES; n++) {
-    int raw = analogRead(SCT_PIN);
-    int shifted = raw - offsetI;
-    sumSq += (long)shifted * shifted;
+String readRFID() { return ""; }  // Sin RFID en simulación
+#endif
+
+// ─── Datos reales (SCT-013) ───────────────────────────────────────────────────
+#if SIMULATION_MODE == 0
+struct PowerReading {
+  float irmsA;
+  float powerW;
+  float energyKwh;
+};
+
+PowerReading measurePower() {
+  int64_t sumSq = 0;
+  const int offset = 2048;
+  for (int n = 0; n < 1480; n++) {
+    int raw = analogRead(PIN_SCT) - offset;
+    sumSq += (int64_t)raw * raw;
     delayMicroseconds(10);
   }
-
-  // Calcular IRMS
-  float irms = (sqrt((float)sumSq / SAMPLES) / ADC_RESOLUTION * VCC) / BURDEN_RESISTOR * SCT_TURNS * ICAL / 100.0;
-  if (irms < 0.05) irms = 0.0;  // Filtrar ruido
-
-  // Potencia estimada (asumiendo FP=0.85 para motores industriales)
-  float watt = irms * 220.0 * 0.85;
-
-  // Energía en kWh para este intervalo (5 segundos)
-  float kwh = watt * (PUBLISH_INTERVAL / 1000.0) / 3600.0 / 1000.0;
-
-  return {irms, watt, kwh};
+  float irms = sqrtf((float)sumSq / 1480) / 4096.0f * 3.3f / 33.0f * 100.0f * 0.909f;
+  if (irms < 0.05f) irms = 0.0f;
+  float power  = irms * 220.0f * 0.85f;
+  float energy = power * (PUBLISH_INTERVAL_MS / 1000.0f) / 3600000.0f;
+  return { irms, power, energy };
 }
 
-// ─── Publicar datos de energía vía MQTT ──────────────────────────────────
-void publishEnergy(PowerReading& p) {
-  StaticJsonDocument<256> doc;
-  doc["machine_id"] = MACHINE_ID;
-  doc["machine_name"] = MACHINE_NAME;
-  doc["irms_a"] = round(p.irms * 100) / 100.0;
-  doc["power_w"] = round(p.watt);
-  doc["energy_kwh"] = round(p.kwh * 10000) / 10000.0;
-  doc["cycle_active"] = cycleActive;
-  if (cycleActive) doc["part_id"] = currentPartId;
-  doc["ts"] = getTimestamp();
-  doc["rssi"] = WiFi.RSSI();
-
-  char topic[64];
-  snprintf(topic, sizeof(topic), "cima/machines/%s/energy", MACHINE_ID);
-
-  char payload[256];
-  serializeJson(doc, payload);
-  mqtt.publish(topic, payload, true);  // retain=true
-
-  if (cycleActive) {
-    cycleEnergyWh += p.kwh * 1000.0;  // Acumular en Wh
-  }
-}
-
-// ─── Publicar fin de ciclo con KPI de energía ────────────────────────────
-void publishCycleEnd() {
-  unsigned long duration = (millis() - cycleStart) / 1000;
-
-  StaticJsonDocument<256> doc;
-  doc["machine_id"]    = MACHINE_ID;
-  doc["part_id"]       = currentPartId;
-  doc["duration_sec"]  = duration;
-  doc["energy_wh"]     = round(cycleEnergyWh * 100) / 100.0;
-  doc["ts_end"]        = getTimestamp();
-  doc["status"]        = "completed";
-
-  char topic[64];
-  snprintf(topic, sizeof(topic), "cima/machines/%s/cycle", MACHINE_ID);
-
-  char payload[256];
-  serializeJson(doc, payload);
-  mqtt.publish(topic, payload, true);
-
-  Serial.printf("[CYCLE END] Pieza: %s | Duración: %lus | Energía: %.2f Wh\n",
-    currentPartId.c_str(), duration, cycleEnergyWh);
-}
-
-// ─── Leer RFID (Pasaporte Digital) ───────────────────────────────────────
 String readRFID() {
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
-    return "";
-  }
-
-  String uid = "";
+  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) return "";
+  String uid;
   for (byte i = 0; i < rfid.uid.size; i++) {
+    if (i) uid += ':';
+    if (rfid.uid.uidByte[i] < 0x10) uid += '0';
     uid += String(rfid.uid.uidByte[i], HEX);
-    if (i < rfid.uid.size - 1) uid += ":";
   }
   uid.toUpperCase();
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
   return uid;
 }
+#endif
 
-void publishRFID(String uid) {
-  StaticJsonDocument<200> doc;
-  doc["part_id"]  = uid;
-  doc["machine"]  = MACHINE_ID;
-  doc["location"] = "cima_entrada";
-  doc["ts"]       = getTimestamp();
-  doc["action"]   = cycleActive ? "cycle_start" : "scan";
+// ─── Publicación MQTT ────────────────────────────────────────────────────────
+void publishEnergy(float irms, float power, float energy) {
+  JsonDocument doc;
+  doc["machine_id"]   = MACHINE_ID;
+  doc["irms_a"]       = roundf(irms * 100) / 100.0f;
+  doc["power_w"]      = roundf(power);
+  doc["energy_kwh"]   = energy;
+  doc["cycle_active"] = cycle.active;
+  doc["simulated"]    = (SIMULATION_MODE == 1);
+  if (cycle.active) doc["part_id"] = cycle.partId;
+  doc["ts"]           = isoTimestamp();
+  doc["rssi"]         = WiFi.RSSI();
 
-  char payload[200];
+  char topic[64];
+  snprintf(topic, sizeof(topic), "cima/machines/%s/energy", MACHINE_ID);
+  char payload[256];
   serializeJson(doc, payload);
-  mqtt.publish("cima/rfid/scan", payload, true);
+  mqtt.publish(topic, payload, true);
 
-  Serial.printf("[RFID] Pieza escaneada: %s\n", uid.c_str());
-  ledBlink(3, 50);
+  if (cycle.active) cycle.energyWh += energy * 1000.0f;
+
+  Serial.printf("[ENERGY] %.0fW  %.2fA  %s\n",
+    power, irms, SIMULATION_MODE ? "(SIM)" : "(REAL)");
 }
 
-// ─── Heartbeat del sistema ────────────────────────────────────────────────
 void publishHeartbeat() {
-  StaticJsonDocument<200> doc;
-  doc["device"]  = CLIENT_ID;
-  doc["machine"] = MACHINE_ID;
-  doc["ip"]      = WiFi.localIP().toString();
-  doc["rssi"]    = WiFi.RSSI();
-  doc["uptime"]  = millis() / 1000;
-  doc["ts"]      = getTimestamp();
-
+  JsonDocument doc;
+  doc["device"]   = CLIENT_ID;
+  doc["machine"]  = MACHINE_ID;
+  doc["ip"]       = WiFi.localIP().toString();
+  doc["rssi"]     = WiFi.RSSI();
+  doc["uptime"]   = millis() / 1000;
+  doc["mode"]     = SIMULATION_MODE ? "simulation" : "real";
+  doc["ts"]       = isoTimestamp();
   char payload[200];
   serializeJson(doc, payload);
-  mqtt.publish("cima/system/heartbeat", payload);
+  mqtt.publish(TOPIC_HEARTBEAT, payload);
+  Serial.println("[HEARTBEAT] enviado");
 }
 
-// ─── Callback MQTT (recibe comandos) ─────────────────────────────────────
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String msg = "";
-  for (int i = 0; i < length; i++) msg += (char)payload[i];
-
+// ─── MQTT callback ────────────────────────────────────────────────────────────
+void onMqttMessage(char* topic, uint8_t* payload, unsigned int len) {
+  String msg;
+  for (unsigned int i = 0; i < len; i++) msg += (char)payload[i];
   Serial.printf("[MQTT IN] %s: %s\n", topic, msg.c_str());
 
-  String topicStr = String(topic);
-
-  // Comando para iniciar/detener ciclo manualmente
-  if (topicStr == "cima/commands/cycle") {
-    StaticJsonDocument<100> cmd;
-    deserializeJson(cmd, msg);
-    if (cmd["action"] == "start") {
-      cycleActive = true;
-      cycleStart = millis();
-      cycleEnergyWh = 0.0;
-      currentPartId = cmd["part_id"] | "UNKNOWN";
-      Serial.printf("[CMD] Ciclo iniciado para pieza: %s\n", currentPartId.c_str());
+  if (String(topic) == TOPIC_CMD_CYCLE) {
+    JsonDocument cmd;
+    if (deserializeJson(cmd, msg) != DeserializationError::Ok) return;
+    const char* action = cmd["action"] | "";
+    if (strcmp(action, "start") == 0 && !cycle.active) {
+      cycle.active   = true;
+      cycle.startMs  = millis();
+      cycle.energyWh = 0.0f;
+      cycle.partId   = cmd["part_id"] | "SIM-001";
+      Serial.printf("[CYCLE] Iniciado: %s\n", cycle.partId.c_str());
       ledBlink(2, 200);
-    } else if (cmd["action"] == "stop") {
-      publishCycleEnd();
-      cycleActive = false;
-      currentPartId = "";
+    } else if (strcmp(action, "stop") == 0 && cycle.active) {
+      cycle.active = false;
+      Serial.printf("[CYCLE] Terminado. Energía: %.2f Wh\n", cycle.energyWh);
     }
-  }
-
-  // Comando OTA (para actualización remota futura)
-  if (topicStr == "cima/commands/ota") {
-    Serial.println("[OTA] Actualización remota recibida — implementar con ArduinoOTA");
   }
 }
 
-// ─── Reconexión MQTT ──────────────────────────────────────────────────────
+// ─── Reconexión MQTT ──────────────────────────────────────────────────────────
 void reconnectMQTT() {
-  int attempts = 0;
-  while (!mqtt.connected() && attempts < 5) {
-    Serial.print("[MQTT] Conectando... ");
+  uint8_t attempts = 0;
+  while (!mqtt.connected() && attempts < 3) {
+    Serial.printf("[MQTT] Conectando a %s...\n", MQTT_BROKER);
     if (mqtt.connect(CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
-      Serial.println("OK");
-      mqtt.subscribe("cima/commands/cycle");
-      mqtt.subscribe("cima/commands/ota");
-      ledBlink(4, 100);
+      mqtt.subscribe(TOPIC_CMD_CYCLE);
+      Serial.println("[MQTT] Conectado OK");
+      ledBlink(4, 80);
     } else {
-      Serial.printf("Fallo (rc=%d) — reintento en 5s\n", mqtt.state());
+      Serial.printf("[MQTT] Fallo rc=%d — reintento en 5s\n", mqtt.state());
       delay(5000);
       attempts++;
     }
   }
 }
 
-// ─── Setup ────────────────────────────────────────────────────────────────
+// ─── Setup ───────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n[CIMA IoT Gateway] Iniciando...");
 
-  pinMode(LED_PIN, OUTPUT);
-  pinMode(CYCLE_BTN_PIN, INPUT_PULLUP);
+  Serial.println("\n════════════════════════════════");
+  Serial.println(" CIMA IoT Gateway");
+  Serial.printf(" Modo: %s\n", SIMULATION_MODE ? "SIMULACION" : "REAL");
+  Serial.printf(" Maquina: %s\n", MACHINE_ID);
+  Serial.println("════════════════════════════════\n");
+
+  pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_CYCLE_BTN, INPUT_PULLUP);
+
+#if SIMULATION_MODE == 0
   analogReadResolution(12);
-  analogSetAttenuation(ADC_11db);  // Para señales hasta 3.3V
-
-  // Inicializar RFID
+  analogSetAttenuation(ADC_11db);
   SPI.begin();
   rfid.PCD_Init();
-  rfid.PCD_DumpVersionToSerial();
+  Serial.println("[RFID] RC522 inicializado");
+#else
+  Serial.println("[SIM] Sensores físicos desactivados");
+#endif
 
-  // Conectar WiFi
+  // WiFi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("[WiFi] Conectando");
-  int wifiAttempts = 0;
-  while (WiFi.status() != WL_CONNECTED && wifiAttempts < 20) {
-    delay(500);
-    Serial.print(".");
-    wifiAttempts++;
+  uint8_t attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 24) {
+    delay(500); Serial.print('.'); attempts++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\n[WiFi] Conectado: %s\n", WiFi.localIP().toString().c_str());
-    ledBlink(5, 100);
+    Serial.printf("\n[WiFi] OK → IP: %s\n", WiFi.localIP().toString().c_str());
+    ledBlink(5, 80);
   } else {
-    Serial.println("\n[WiFi] Fallo de conexión — modo offline");
+    Serial.println("\n[WiFi] Sin conexión — verificar credenciales en .env");
   }
 
-  // Configurar tiempo NTP
-  configTime(-21600, 0, "pool.ntp.org");  // UTC-6 para Querétaro
-  Serial.println("[NTP] Tiempo sincronizado");
+  // NTP
+  configTime(NTP_UTC_OFFSET_SEC, 0, NTP_SERVER);
+  Serial.println("[NTP] Sincronizando...");
 
-  // Configurar MQTT
+  // OTA
+  ArduinoOTA.setHostname(CLIENT_ID);
+  ArduinoOTA.begin();
+
+  // MQTT
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
-  mqtt.setCallback(mqttCallback);
+  mqtt.setCallback(onMqttMessage);
   mqtt.setBufferSize(512);
+  mqtt.setKeepAlive(30);
 
-  Serial.printf("[READY] Máquina: %s | IP: %s\n", MACHINE_NAME, WiFi.localIP().toString().c_str());
+  Serial.println("[READY] Sistema listo\n");
 }
 
-// ─── Loop principal ───────────────────────────────────────────────────────
+// ─── Loop ────────────────────────────────────────────────────────────────────
 void loop() {
-  // Reconectar si se pierde conexión
+  ArduinoOTA.handle();
+
   if (!mqtt.connected()) reconnectMQTT();
   mqtt.loop();
 
-  unsigned long now = millis();
+  uint32_t now = millis();
 
-  // Publicar energía cada PUBLISH_INTERVAL ms
-  if (now - lastMqttPublish >= PUBLISH_INTERVAL) {
-    lastMqttPublish = now;
-    PowerReading p = measurePower();
-    publishEnergy(p);
-    Serial.printf("[ENERGY] %.1fW | IRMS: %.2fA | Ciclo: %s\n",
-      p.watt, p.irms, cycleActive ? currentPartId.c_str() : "inactivo");
+  // Publicar energía cada 5 segundos
+  if (now - lastPublish >= PUBLISH_INTERVAL_MS) {
+    lastPublish = now;
+    auto p = measurePower();
+    publishEnergy(p.irmsA, p.powerW, p.energyKwh);
   }
 
-  // Heartbeat
-  if (now - lastHeartbeat >= HEARTBEAT_INTERVAL) {
+  // Heartbeat cada 30 segundos
+  if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeat = now;
     publishHeartbeat();
   }
 
-  // Leer RFID
+  // RFID solo en modo real
+#if SIMULATION_MODE == 0
   String uid = readRFID();
-  if (uid.length() > 0) {
-    publishRFID(uid);
-    // Si hay lectura RFID, auto-iniciar ciclo
-    if (!cycleActive) {
-      cycleActive = true;
-      cycleStart = millis();
-      cycleEnergyWh = 0.0;
-      currentPartId = uid;
-      Serial.printf("[AUTO-CYCLE] Ciclo iniciado con RFID: %s\n", uid.c_str());
-    }
+  if (!uid.isEmpty() && !cycle.active) {
+    cycle.active   = true;
+    cycle.startMs  = millis();
+    cycle.energyWh = 0.0f;
+    cycle.partId   = uid;
+    Serial.printf("[RFID] Pieza detectada: %s\n", uid.c_str());
   }
+#endif
 
-  // Botón físico para terminar ciclo
-  if (digitalRead(CYCLE_BTN_PIN) == LOW && cycleActive) {
-    delay(50);  // debounce
-    if (digitalRead(CYCLE_BTN_PIN) == LOW) {
-      publishCycleEnd();
-      cycleActive = false;
-      currentPartId = "";
-      delay(500);
+  // Botón BOOT = simular scan RFID (solo en modo simulación)
+#if SIMULATION_MODE == 1
+  if (digitalRead(PIN_CYCLE_BTN) == LOW) {
+    delay(50);
+    if (digitalRead(PIN_CYCLE_BTN) == LOW && !cycle.active) {
+      cycle.active   = true;
+      cycle.startMs  = millis();
+      cycle.energyWh = 0.0f;
+      cycle.partId   = "SIM-" + String(millis() % 1000);
+      Serial.printf("[SIM] Ciclo iniciado: %s\n", cycle.partId.c_str());
+      ledBlink(3, 100);
+      delay(300);
+    } else if (digitalRead(PIN_CYCLE_BTN) == LOW && cycle.active) {
+      cycle.active = false;
+      Serial.printf("[SIM] Ciclo terminado. Energía: %.2f Wh\n", cycle.energyWh);
+      delay(300);
     }
   }
+#endif
 
   delay(10);
 }

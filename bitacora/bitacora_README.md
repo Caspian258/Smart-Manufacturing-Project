@@ -2,11 +2,37 @@
 # Orquestador: Claude Code
 # ═══════════════════════════════════════════════════════════════════════
 
+## ENTRADA #003 — Primer dato MQTT recibido: ESP32-S3 → RPi5 operativo
+- **Fecha**: 2026-03-28
+- **Estado**: ✅ Completado — HITO FASE 1
+- **Acción**: Firmware flasheado en ESP32-S3 (torno). Primer dato MQTT publicado y recibido correctamente por el broker en RPi5 (192.168.100.168:1883). Sistema IoT extremo a extremo funcional.
+
+### Estado del stack al cierre de sesión
+| Componente | Estado |
+|-----------|--------|
+| GitHub repo | ✅ sincronizado |
+| Firmware ESP32-S3 | ✅ publicando datos de energía cada 5s |
+| MQTT Broker (Mosquitto) | ✅ recibiendo datos desde ESP32 |
+| InfluxDB 2.7 | ✅ listo para guardar (pendiente flujo n8n) |
+| Node-RED | ✅ listo para dashboard |
+| n8n | ✅ listo para flujos |
+
+### Cambios técnicos en esta sesión
+- `main.cpp` refactorizado: `SIMULATION_MODE` toggle, `JsonDocument` (ArduinoJson v7), lectura SCT-013 real + modo simulación realista de fresadora 1200W
+- Credenciales movidas a guards `#ifndef` — inyección limpia desde `.env` vía `inject_env.py`
+- `.env` actualizado: broker → `192.168.100.168`, machine_id → `torno`
+
+### Archivos modificados
+- `firmware/esp32-s3/src/main.cpp`
+- `firmware/esp32-s3/.env`
+- `bitacora/bitacora_README.md`
+
+---
+
 ## ENTRADA #002 — Stack RPi5 completamente operativo
 - **Fecha**: 2026-03-28
 - **Estado**: ✅ Completado
-- **Resumen**: Después de resolver problemas de compatibilidad con
-  Debian 13 Trixie, todos los servicios están activos.
+- **Resumen**: Después de resolver problemas de compatibilidad con Debian 13 Trixie, todos los servicios están activos.
 
 ### Servicios instalados y corriendo
 | Servicio | Puerto | Método | Estado |
@@ -17,37 +43,24 @@
 | n8n | 5678 | Docker | ✅ active |
 
 ### Problemas encontrados y soluciones
-- **Mosquitto**: faltaba `/etc/mosquitto/mosquitto.conf` y usuario
-  del sistema — reinstalación limpia con `apt purge` lo resolvió
-- **InfluxDB**: repo oficial no soporta Debian Trixie (sqv/GPG issue)
-  — instalado desde binario `.tar.gz` con servicio systemd manual
-- **n8n via npm**: Python 3.13 eliminó `distutils`, rompía
-  `node-gyp` — resuelto instalando vía Docker
-- **influx CLI**: binario separado del servidor, descargado
-  `influxdb2-client` por separado
-
-### Usuarios MQTT creados
-- `smfg_user` / `SmartMfg2024!` — usuario principal del sistema
-- `esp32_cima` / `Esp32Cima!` — gateway IoT Planta 1
+- **Mosquitto**: faltaba `/etc/mosquitto/mosquitto.conf` — reinstalación con `apt purge`
+- **InfluxDB**: repo oficial no soporta Debian Trixie — instalado desde binario `.tar.gz`
+- **n8n via npm**: Python 3.13 rompía `node-gyp` — resuelto con Docker
+- **influx CLI**: binario separado, descargado `influxdb2-client` por separado
 
 ### InfluxDB configurado
-- Org: `smart-manufacturing`
-- Bucket: `sensor-data` (retención 30 días)
-- Admin: `admin` / `SmartMfg2024!`
+- Org: `smart-manufacturing` | Bucket: `sensor-data` (30 días)
 
 ---
 
 ## ENTRADA #001 — Estructura del repositorio
 - **Fecha**: 2026-03-28
 - **Estado**: ✅ Completado
-- **Archivos creados**: README.md, CLAUDE.md, platformio.ini,
-  main.cpp, config.h, inject_env.py, mqtt_to_influxdb.json,
-  setup_rpi5.sh, auto_push.yml
 
 ---
 
 ## PENDIENTES — Fase 1 (semanas 1-6)
-- [ ] Flashear ESP32-S3 y verificar mensajes MQTT llegando al RPi5
+- [x] Flashear ESP32-S3 y verificar mensajes MQTT llegando al RPi5 ✅
 - [ ] Importar flujo `flows/n8n/mqtt_to_influxdb.json` en n8n
 - [ ] Construir dashboard Node-RED con KPIs (energía, OEE, trazabilidad)
 - [ ] Conectar SCT-013 al ESP32-S3 (diagrama en docs/)
@@ -69,5 +82,6 @@
 ## HISTORIAL DE VERSIONES
 | Versión | Fecha | Descripción |
 |---------|-------|-------------|
+| 0.3.0 | 2026-03-28 | Primer dato MQTT recibido — ESP32 → RPi5 operativo |
 | 0.2.0 | 2026-03-28 | Stack RPi5 completamente operativo |
 | 0.1.0 | 2026-03-28 | Estructura inicial del repositorio |
