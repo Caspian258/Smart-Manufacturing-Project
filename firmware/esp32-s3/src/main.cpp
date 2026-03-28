@@ -23,18 +23,34 @@
 #include <time.h>
 
 // ─── Configuración WiFi y MQTT ─────────────────────────────────────────────
-const char* WIFI_SSID     = "TU_WIFI_SSID";
-const char* WIFI_PASSWORD = "TU_WIFI_PASSWORD";
-const char* MQTT_BROKER   = "192.168.1.100";  // IP de tu Raspberry Pi 5
-const int   MQTT_PORT     = 1883;
-const char* MQTT_USER     = "esp32_cima";
-const char* MQTT_PASSWORD = "Esp32Cima!";
-const char* CLIENT_ID     = "esp32-cima-planta1";
+// Valores inyectados desde .env vía scripts/inject_env.py.
+// #ifndef actúa como fallback si no existe .env.
+#ifndef WIFI_SSID
+#  define WIFI_SSID     "Totalplay-3CAF"
+#endif
+#ifndef WIFI_PASSWORD
+#  define WIFI_PASSWORD "3CAF3FT8723uQsTb"
+#endif
+#ifndef MQTT_BROKER
+#  define MQTT_BROKER   "10.90.159.4"
+#endif
+#ifndef MQTT_PORT
+#  define MQTT_PORT     1883
+#endif
+#ifndef MQTT_USER
+#  define MQTT_USER     "esp32_cima"
+#endif
+#ifndef MQTT_PASSWORD
+#  define MQTT_PASSWORD "Esp32Cima!"
+#endif
+#ifndef MACHINE_ID
+#  define MACHINE_ID    "fresadora"
+#endif
+
+const char* CLIENT_ID = "esp32-cima-planta1";
 
 // ─── Identificación de máquina ─────────────────────────────────────────────
-// Cambiar según cuál máquina esté monitoreando
-const char* MACHINE_ID   = "fresadora";  // opciones: taladro, torno, fresadora
-const char* MACHINE_NAME = "Fresadora CIMA-01";
+const char* MACHINE_NAME = "Torno ROMI";
 
 // ─── Pines Hardware ────────────────────────────────────────────────────────
 // SCT-013 (sensor de corriente AC) — conectado a ADC a través de burden resistor
