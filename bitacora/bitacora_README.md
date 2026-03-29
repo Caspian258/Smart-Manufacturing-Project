@@ -2,6 +2,45 @@
 # Orquestador: Claude Code
 # ═══════════════════════════════════════════════════════════════════════
 
+## ENTRADA #006 — Grafana operativo con KPIs en tiempo real
+- **Fecha**: 2026-03-29
+- **Estado**: ✅ Completado — HITO FASE 1
+- **Acción**: Grafana instalado en RPi5, datasource InfluxDB conectado y dashboard de KPIs importado. Datos del ESP32 visibles en tiempo real.
+
+### Problemas encontrados y soluciones
+| Problema | Solución |
+|---------|---------|
+| `musl` faltaba como dependencia | `sudo apt-get install -y musl && sudo dpkg --configure grafana` |
+| Puerto 3000 redirigido por regla Docker a `172.17.0.2:8080` | Grafana movido al puerto 3001 en `grafana.ini` |
+| Grafana no accesible desde red local | Puerto 3001 abierto, acceso vía `192.168.100.168:3001` |
+
+### Estado del dashboard
+| Panel | Estado |
+|-------|--------|
+| Gauge — Potencia actual (W) | ✅ datos en vivo |
+| Gauge — Corriente Irms (A) | ✅ datos en vivo |
+| Historial Potencia (última hora) | ✅ datos en vivo |
+| Energía Acumulada (kWh) | ✅ datos en vivo |
+| Modo Operación (Sim / Real) | ✅ datos en vivo |
+| Trazabilidad — Ciclos Productivos | ✅ datos en vivo |
+| Alertas — Anomalías de Consumo (>3000W) | ✅ datos en vivo |
+
+### Archivos agregados al repo
+- `dashboard/grafana/grafana_datasource.yaml`
+- `dashboard/grafana/grafana_dashboard.json`
+
+### Configuración Grafana
+- Puerto: **3001** (3000 ocupado por Docker)
+- URL: `http://192.168.100.168:3001`
+- Datasource: InfluxDB Flux → `smart-manufacturing` / `sensor-data`
+- Auto-refresh: 10s
+
+### Próximo paso
+- Conectar SCT-013 al ESP32-S3 (pasar de simulación a datos reales)
+- Probar RC522 RFID — Pasaporte Digital primera pieza
+
+---
+
 ## ENTRADA #005 — Dashboard Node-RED operativo con KPIs en vivo
 - **Fecha**: 2026-03-29
 - **Estado**: ✅ Completado — HITO FASE 1
@@ -18,12 +57,6 @@
 | OEE Global (%) | ✅ calculado cada 60s |
 | Disponibilidad / Rendimiento / Calidad | ✅ en vivo |
 
-### Archivos involucrados
-- `flows/nodered/nodered_dashboard.json`
-
-### Próximo paso
-- Configurar Grafana con datasource InfluxDB para persistencia histórica de KPIs
-
 ---
 
 ## ENTRADA #004 — Pipeline completo: ESP32 → MQTT → n8n → InfluxDB
@@ -39,9 +72,6 @@
 | n8n workflow | ✅ procesando |
 | InfluxDB guardando | ✅ |
 
-### Próximo paso
-- Configurar dashboard Grafana con datasource InfluxDB para visualizar KPIs en tiempo real
-
 ---
 
 ## ENTRADA #003 — Primer dato MQTT recibido: ESP32-S3 → RPi5 operativo
@@ -49,49 +79,25 @@
 - **Estado**: ✅ Completado — HITO FASE 1
 - **Acción**: Firmware flasheado en ESP32-S3 (torno). Primer dato MQTT publicado y recibido correctamente por el broker en RPi5 (192.168.100.168:1883). Sistema IoT extremo a extremo funcional.
 
-### Estado del stack al cierre de sesión
-| Componente | Estado |
-|-----------|--------|
-| GitHub repo | ✅ sincronizado |
-| Firmware ESP32-S3 | ✅ publicando datos de energía cada 5s |
-| MQTT Broker (Mosquitto) | ✅ recibiendo datos desde ESP32 |
-| InfluxDB 2.7 | ✅ listo para guardar (pendiente flujo n8n) |
-| Node-RED | ✅ listo para dashboard |
-| n8n | ✅ listo para flujos |
-
 ### Cambios técnicos en esta sesión
-- `main.cpp` refactorizado: `SIMULATION_MODE` toggle, `JsonDocument` (ArduinoJson v7), lectura SCT-013 real + modo simulación realista de fresadora 1200W
+- `main.cpp` refactorizado: `SIMULATION_MODE` toggle, `JsonDocument` (ArduinoJson v7)
 - Credenciales movidas a guards `#ifndef` — inyección limpia desde `.env` vía `inject_env.py`
 - `.env` actualizado: broker → `192.168.100.168`, machine_id → `torno`
-
-### Archivos modificados
-- `firmware/esp32-s3/src/main.cpp`
-- `firmware/esp32-s3/.env`
-- `bitacora/bitacora_README.md`
 
 ---
 
 ## ENTRADA #002 — Stack RPi5 completamente operativo
 - **Fecha**: 2026-03-28
 - **Estado**: ✅ Completado
-- **Resumen**: Después de resolver problemas de compatibilidad con Debian 13 Trixie, todos los servicios están activos.
 
 ### Servicios instalados y corriendo
-| Servicio | Puerto | Método | Estado |
-|---------|--------|--------|--------|
-| Mosquitto (MQTT Broker) | 1883 | apt | ✅ active |
-| InfluxDB 2.7 | 8086 | binario directo | ✅ active |
-| Node-RED | 1880 | npm global | ✅ active |
-| n8n | 5678 | Docker | ✅ active |
-
-### Problemas encontrados y soluciones
-- **Mosquitto**: faltaba `/etc/mosquitto/mosquitto.conf` — reinstalación con `apt purge`
-- **InfluxDB**: repo oficial no soporta Debian Trixie — instalado desde binario `.tar.gz`
-- **n8n via npm**: Python 3.13 rompía `node-gyp` — resuelto con Docker
-- **influx CLI**: binario separado, descargado `influxdb2-client` por separado
-
-### InfluxDB configurado
-- Org: `smart-manufacturing` | Bucket: `sensor-data` (30 días)
+| Servicio | Puerto | Estado |
+|---------|--------|--------|
+| Mosquitto (MQTT Broker) | 1883 | ✅ active |
+| InfluxDB 2.7 | 8086 | ✅ active |
+| Node-RED | 1880 | ✅ active |
+| n8n | 5678 | ✅ active |
+| Grafana | 3001 | ✅ active |
 
 ---
 
@@ -105,9 +111,9 @@
 - [x] Flashear ESP32-S3 y verificar mensajes MQTT llegando al RPi5 ✅
 - [x] Importar flujo `flows/n8n/mqtt_to_influxdb.json` en n8n ✅
 - [x] Construir dashboard Node-RED con KPIs (energía, OEE, trazabilidad) ✅
+- [x] Configurar Grafana con datasource InfluxDB ✅
 - [ ] Conectar SCT-013 al ESP32-S3 (diagrama en docs/)
 - [ ] Probar RC522 RFID — Pasaporte Digital primera pieza
-- [ ] Configurar Grafana con datasource InfluxDB
 
 ## PENDIENTES — Fase 2 (semanas 7-12)
 - [ ] Integrar OpenClaw (cobot)
@@ -124,6 +130,7 @@
 ## HISTORIAL DE VERSIONES
 | Versión | Fecha | Descripción |
 |---------|-------|-------------|
+| 0.6.0 | 2026-03-29 | Grafana operativo con KPIs en tiempo real |
 | 0.5.0 | 2026-03-29 | Dashboard Node-RED operativo con KPIs en vivo |
 | 0.4.0 | 2026-03-28 | Pipeline completo ESP32 → MQTT → n8n → InfluxDB |
 | 0.3.0 | 2026-03-28 | Primer dato MQTT recibido — ESP32 → RPi5 operativo |
