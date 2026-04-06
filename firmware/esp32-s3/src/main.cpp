@@ -68,7 +68,7 @@ struct PowerReading {
 };
 
 PowerReading measurePower() {
-  // Simular variación realista de una fresadora industrial
+  // Simular variación realista de una torno industrial
   static float base = 1200.0f;
   float noise = (random(-200, 200)) / 10.0f;
   float power = base + noise;
