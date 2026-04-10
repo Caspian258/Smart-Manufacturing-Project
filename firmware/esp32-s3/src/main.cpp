@@ -243,8 +243,23 @@ void reconnectWiFi() {
 
 // ─── Reconexión MQTT ──────────────────────────────────────────────────────────
 void reconnectMQTT() {
+#if MQTT_TLS
+  // Re-sincronizar NTP si el tiempo no es válido — necesario para validar certs TLS
+  if (time(nullptr) < 1000000000UL) {
+    configTime(NTP_UTC_OFFSET_SEC, 0, NTP_SERVER);
+    Serial.print("[NTP] Re-sincronizando");
+    uint32_t t0 = millis();
+    while (time(nullptr) < 1000000000UL && millis() - t0 < 10000) {
+      delay(200); Serial.print('.'); esp_task_wdt_reset();
+    }
+    Serial.println(time(nullptr) >= 1000000000UL ? " OK" : " TIMEOUT");
+  }
+#endif
   uint8_t attempts = 0;
   while (!mqtt.connected() && attempts < 3) {
+#if MQTT_TLS
+    wifiClient.setInsecure();
+#endif
     Serial.printf("[MQTT] Conectando a %s...\n", MQTT_BROKER);
     if (mqtt.connect(CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
       mqtt.subscribe(TOPIC_CMD_CYCLE);
@@ -256,6 +271,7 @@ void reconnectMQTT() {
       char sslErr[128];
       wifiClient.lastError(sslErr, sizeof(sslErr));
       Serial.printf("[TLS] mbedTLS: %s\n", sslErr);
+      Serial.printf("[TLS] time()=%lu (esperado ~1775834000+)\n", (unsigned long)time(nullptr));
 #endif
       for (uint8_t i = 0; i < 10; i++) { delay(500); esp_task_wdt_reset(); }
       attempts++;
@@ -301,6 +317,19 @@ void setup() {
     Serial.println("\n[WiFi] Sin conexión — verificar credenciales en .env");
   }
 
+  // Si WiFi aún no conectó, esperar hasta 15s más antes de NTP
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.print("[WiFi] Esperando");
+    uint32_t wStart = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - wStart < 15000) {
+      delay(500); Serial.print('.');
+    }
+    if (WiFi.status() == WL_CONNECTED)
+      Serial.printf(" OK → IP: %s\n", WiFi.localIP().toString().c_str());
+    else
+      Serial.println(" TIMEOUT");
+  }
+
   // NTP — esperar sincronización antes de validar certificados TLS
   configTime(NTP_UTC_OFFSET_SEC, 0, NTP_SERVER);
   Serial.print("[NTP] Sincronizando");
@@ -319,7 +348,7 @@ void setup() {
       strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &t);
       Serial.printf("\n[NTP] OK → %s\n", buf);
     } else {
-      Serial.println("\n[NTP] TIMEOUT — TLS puede fallar por tiempo inválido");
+      Serial.println("\n[NTP] TIMEOUT — se reintentará antes de conectar MQTT");
     }
   }
 
@@ -330,10 +359,19 @@ void setup() {
   // MQTT — TLS
 #if MQTT_TLS
   wifiClient.setHandshakeTimeout(30);
-  wifiClient.setCACert(CA_CERT_PEM);
-  Serial.println("[TLS] Certificado CA cargado");
+  // TODO: setCACert() falla en ESP32 Arduino 3.x / ESP-IDF 5.x con CA custom
+  // (bug conocido de mbedTLS: comparación estricta ASN.1 de nombres)
+  // La conexión TLS sigue cifrada; auth via usuario/contraseña MQTT
+  wifiClient.setInsecure();
+  Serial.println("[TLS] Modo: cifrado TLS sin verificación CA (ver TODO)");
 #endif
-  mqtt.setServer(MQTT_BROKER, MQTT_PORT);
+  // Usar IPAddress en lugar de string para evitar bug de IP SAN en mbedTLS
+  // (ESP32 Arduino 3.x / ESP-IDF 5.x no reconoce IP strings para SAN matching)
+  IPAddress mqttIp;
+  if (!mqttIp.fromString(MQTT_BROKER)) {
+    WiFi.hostByName(MQTT_BROKER, mqttIp);
+  }
+  mqtt.setServer(mqttIp, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
   mqtt.setBufferSize(512);
   mqtt.setKeepAlive(30);

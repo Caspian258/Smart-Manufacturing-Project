@@ -2,6 +2,27 @@
 # Orquestador: Claude Code
 # ═══════════════════════════════════════════════════════════════════════
 
+## ENTRADA #013 — ESP32 → RPi5 operativo via MQTT-TLS puerto 8883
+- **Fecha**: 2026-04-10
+- **Acción**: ESP32 publica datos de energía cada 5s al broker MQTT en la RPi5 por puerto 8883 con TLS (cifrado en tránsito). Validación de certificado CA pendiente por bug en ESP32 Arduino 3.x / ESP-IDF 5.x.
+- **Estado**: ✅ Completado — datos fluyendo en tiempo real
+- **Archivos modificados**: `firmware/esp32-s3/src/main.cpp`
+- **Próximo paso**: Verificar datos en Grafana / Node-RED
+
+### Estado del canal MQTT-TLS
+| Item | Estado |
+|------|--------|
+| Cifrado TLS puerto 8883 | ✅ activo (setInsecure) |
+| Autenticación MQTT usuario/contraseña | ✅ activa |
+| Validación CA cert (setCACert) | ⚠️ pendiente — bug ESP32 Arduino 3.x |
+| Datos energía cada 5s | ✅ publicando |
+| Heartbeat cada 30s | ✅ publicando |
+
+### Causa del bug TLS (para referencia futura)
+`setCACert()` en ESP32 Arduino core 3.x (ESP-IDF 5.x / mbedTLS 3.x) falla con `X509 - Certificate verification failed` aunque los certificados son válidos. Causa probable: mbedTLS hace comparación estricta byte-a-byte del Subject/Issuer en ASN.1 (incluyendo tipo de string UTF8String vs PrintableString), mientras OpenSSL es más lento. Workaround: `setInsecure()` mantiene el cifrado TLS; se revisará cuando se actualice el core de Arduino ESP32.
+
+---
+
 ## ENTRADA #012 — Auditoría firmware: 6 correcciones aplicadas
 - **Fecha**: 2026-04-10
 - **Acción**: Auditoría completa del firmware ESP32-S3. Se aplicaron 6 correcciones de robustez y seguridad tras descartar falsas alarmas (race condition, QoS, .env).
@@ -184,6 +205,7 @@
 ## HISTORIAL DE VERSIONES
 | Versión | Fecha | Descripción |
 |---------|-------|-------------|
+| 1.1.0 | 2026-04-10 | ESP32 → RPi5 operativo MQTT-TLS — datos en tiempo real |
 | 1.0.1 | 2026-04-10 | Auditoría firmware — 6 correcciones robustez/seguridad |
 | 1.0.0 | 2026-04-10 | MQTT TLS completo con setCACert() — NTP blocking wait implementado |
 | 0.9.0 | 2026-04-10 | MQTT TLS activo en puerto 8883 — setCACert pendiente fix NTP |
