@@ -3,7 +3,7 @@ gen_cert_header.py — PlatformIO pre-build script
 Convierte firmware/esp32-s3/certs/ca.crt → include/ca_cert.h
 Se ejecuta automáticamente antes de compilar.
 """
-import os
+import os, sys
 Import("env")  # noqa: F821  (PlatformIO injects this)
 
 CERT_SRC  = os.path.join(env.subst("$PROJECT_DIR"), "certs", "ca.crt")
@@ -12,19 +12,10 @@ CERT_DEST = os.path.join(env.subst("$PROJECT_DIR"), "include", "ca_cert.h")
 
 def generate_cert_header(source, target, env):
     if not os.path.isfile(CERT_SRC):
-        print(f"\n[gen_cert_header] ADVERTENCIA: {CERT_SRC} no encontrado.")
-        print("[gen_cert_header] Copiar el certificado CA del broker MQTT a ese path.\n")
-        # Genera un header de placeholder para que compile
-        with open(CERT_DEST, "w") as f:
-            f.write(
-                "// PLACEHOLDER — reemplazar con el contenido real de ca.crt\n"
-                "#pragma once\n"
-                "static const char CA_CERT_PEM[] =\n"
-                "    \"-----BEGIN CERTIFICATE-----\\n\"\n"
-                "    \"REEMPLAZAR_CON_CERT_REAL\\n\"\n"
-                "    \"-----END CERTIFICATE-----\\n\";\n"
-            )
-        return
+        print(f"\n[ERROR] Certificado CA no encontrado: {CERT_SRC}")
+        print("[ERROR] Copiar el certificado CA del broker MQTT a ese path y recompilar.")
+        print("[ERROR] En la RPi5: sudo cat /etc/mosquitto/certs/ca.crt\n")
+        sys.exit(1)
 
     with open(CERT_SRC, "r") as f:
         cert_content = f.read().strip()

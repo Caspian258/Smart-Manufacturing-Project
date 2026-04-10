@@ -140,9 +140,11 @@ void publishEnergy(float irms, float power, float energy) {
 
   char topic[64];
   snprintf(topic, sizeof(topic), "cima/machines/%s/energy", MACHINE_ID);
-  char payload[256];
+  char payload[320];
   serializeJson(doc, payload);
-  mqtt.publish(topic, payload, true);
+  if (!mqtt.publish(topic, payload, true)) {
+    Serial.printf("[MQTT] publish falló: %s\n", topic);
+  }
 
   if (cycle.active) cycle.energyWh += energy * 1000.0f;
 
@@ -161,13 +163,17 @@ void publishHeartbeat() {
   doc["ts"]       = isoTimestamp();
   char payload[200];
   serializeJson(doc, payload);
-  mqtt.publish(TOPIC_HEARTBEAT, payload);
-  Serial.println("[HEARTBEAT] enviado");
+  if (!mqtt.publish(TOPIC_HEARTBEAT, payload)) {
+    Serial.println("[MQTT] heartbeat publish falló");
+  } else {
+    Serial.println("[HEARTBEAT] enviado");
+  }
 }
 
 // ─── MQTT callback ────────────────────────────────────────────────────────────
 void onMqttMessage(char* topic, uint8_t* payload, unsigned int len) {
   String msg;
+  msg.reserve(len);
   for (unsigned int i = 0; i < len; i++) msg += (char)payload[i];
   Serial.printf("[MQTT IN] %s: %s\n", topic, msg.c_str());
 
@@ -301,7 +307,7 @@ void setup() {
   {
     uint32_t ntpStart = millis();
     time_t now = 0;
-    while (now < 1000000000UL && millis() - ntpStart < 10000) {
+    while (now < 1000000000UL && millis() - ntpStart < 15000) {
       delay(200);
       Serial.print('.');
       now = time(nullptr);
@@ -345,17 +351,19 @@ void loop() {
 
   uint32_t now = millis();
 
-  // Publicar energía cada 5 segundos
-  if (now - lastPublish >= PUBLISH_INTERVAL_MS) {
-    lastPublish = now;
-    auto p = measurePower();
-    publishEnergy(p.irmsA, p.powerW, p.energyKwh);
-  }
+  if (mqtt.connected()) {
+    // Publicar energía cada 5 segundos
+    if (now - lastPublish >= PUBLISH_INTERVAL_MS) {
+      lastPublish = now;
+      auto p = measurePower();
+      publishEnergy(p.irmsA, p.powerW, p.energyKwh);
+    }
 
-  // Heartbeat cada 30 segundos
-  if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-    lastHeartbeat = now;
-    publishHeartbeat();
+    // Heartbeat cada 30 segundos
+    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+      lastHeartbeat = now;
+      publishHeartbeat();
+    }
   }
 
   // RFID solo en modo real

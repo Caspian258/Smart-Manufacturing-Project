@@ -2,6 +2,27 @@
 # Orquestador: Claude Code
 # ═══════════════════════════════════════════════════════════════════════
 
+## ENTRADA #012 — Auditoría firmware: 6 correcciones aplicadas
+- **Fecha**: 2026-04-10
+- **Acción**: Auditoría completa del firmware ESP32-S3. Se aplicaron 6 correcciones de robustez y seguridad tras descartar falsas alarmas (race condition, QoS, .env).
+- **Estado**: ✅ Completado — firmware hardened v1.0.1
+- **Archivos modificados**:
+  - `firmware/esp32-s3/src/main.cpp`
+  - `firmware/esp32-s3/scripts/gen_cert_header.py`
+- **Próximo paso**: Cerrar puerto 1883 en Mosquitto
+
+### Correcciones aplicadas
+| ID | Problema | Fix |
+|----|----------|-----|
+| P0 | `gen_cert_header.py` generaba cert falso si faltaba `ca.crt` | `sys.exit(1)` con mensaje claro |
+| P1 | `publishEnergy/Heartbeat` se llamaban sin verificar `mqtt.connected()` | Guard `if (mqtt.connected())` en loop |
+| P2 | `char payload[256]` ajustado con TLS + part_id largo | Aumentado a `char payload[320]` |
+| P3 | Concatenación de `String` O(n²) en callback MQTT | `msg.reserve(len)` pre-allocación |
+| P4 | NTP timeout 10s insuficiente en redes lentas | Aumentado a 15s |
+| P5 | `mqtt.publish()` falla silenciosamente | Verificar retorno + log de error |
+
+---
+
 ## ENTRADA #011 — MQTT TLS con setCACert() operativo — fix NTP implementado
 - **Fecha**: 2026-04-10
 - **Acción**: Fix aplicado: `setup()` ahora espera activamente a que NTP sincronice (`time(nullptr) >= 1000000000`) con timeout de 10 s antes de conectar MQTT. Se eliminó `setInsecure()` y se usa `setCACert(CA_CERT_PEM)` para validación real del certificado CA.
@@ -163,6 +184,7 @@
 ## HISTORIAL DE VERSIONES
 | Versión | Fecha | Descripción |
 |---------|-------|-------------|
+| 1.0.1 | 2026-04-10 | Auditoría firmware — 6 correcciones robustez/seguridad |
 | 1.0.0 | 2026-04-10 | MQTT TLS completo con setCACert() — NTP blocking wait implementado |
 | 0.9.0 | 2026-04-10 | MQTT TLS activo en puerto 8883 — setCACert pendiente fix NTP |
 | 0.8.0 | 2026-04-09 | Plan integración PLC S7-1200 Celda 3105 + inicio Fase A |
