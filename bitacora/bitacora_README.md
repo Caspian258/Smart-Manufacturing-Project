@@ -2,6 +2,25 @@
 # Orquestador: Claude Code
 # ═══════════════════════════════════════════════════════════════════════
 
+## ENTRADA #010 — MQTT con TLS puerto 8883 — Ciberseguridad Fase 1
+- **Fecha**: 2026-04-10
+- **Acción**: Actualización de firmware ESP32-S3 para comunicación MQTT cifrada con TLS
+- **Estado**: ✅ Completado
+- **Archivos modificados**:
+  - `firmware/esp32-s3/include/config.h` — `MQTT_PORT` → 8883, nuevo define `MQTT_TLS 1`
+  - `firmware/esp32-s3/src/main.cpp` — `WiFiClientSecure` + `setCACert()` en lugar de `WiFiClient`
+  - `firmware/esp32-s3/platformio.ini` — `extra_scripts = pre:scripts/gen_cert_header.py`
+  - `firmware/esp32-s3/scripts/gen_cert_header.py` — script nuevo: convierte `certs/ca.crt` → `include/ca_cert.h` en build
+  - `firmware/esp32-s3/certs/ca.crt` — placeholder con instrucciones para obtener el cert real
+  - `firmware/esp32-s3/.gitignore` — excluye `include/ca_cert.h` (auto-generado)
+- **Decisión de diseño**: El certificado CA vive en `certs/ca.crt` (gittracked como placeholder).
+  El script de pre-build lo convierte a `include/ca_cert.h` (gitignored) en tiempo de compilación.
+  TLS se puede deshabilitar en config.h con `MQTT_TLS 0` para debug sin cert.
+- **Próximo paso**: Reemplazar `certs/ca.crt` con el cert real del broker Mosquitto de la RPi5,
+  luego habilitar TLS en Mosquitto (puerto 8883) y flashear el ESP32-S3.
+
+---
+
 ## ENTRADA #009 — Fase A iniciada: Modbus TCP en TIA Portal
 - **Fecha**: 2026-04-09
 - **Estado**: 🔄 En progreso

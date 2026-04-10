@@ -1,0 +1,13 @@
+# PLACEHOLDER — Reemplazar con el certificado CA real del broker MQTT
+#
+# Cómo obtener el certificado:
+#   En la RPi5 (donde corre Mosquitto):
+#     cat /etc/mosquitto/certs/ca.crt
+#   O desde el cliente:
+#     openssl s_client -connect <IP_RPI5>:8883 -showcerts </dev/null 2>/dev/null \
+#       | openssl x509 -outform PEM
+#
+# Pegar aquí el bloque completo incluyendo:
+# -----BEGIN CERTIFICATE-----
+# ...
+# -----END CERTIFICATE-----

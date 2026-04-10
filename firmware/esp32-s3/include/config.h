@@ -9,7 +9,10 @@
   #define MQTT_BROKER   "192.168.1.100"
 #endif
 #ifndef MQTT_PORT
-  #define MQTT_PORT     1883
+  #define MQTT_PORT     8883
+#endif
+#ifndef MQTT_TLS
+  #define MQTT_TLS      1
 #endif
 #ifndef MQTT_USER
   #define MQTT_USER     "esp32_cima"

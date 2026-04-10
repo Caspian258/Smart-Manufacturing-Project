@@ -9,12 +9,14 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include <time.h>
 
 #include "config.h"
+#include "ca_cert.h"
 
 // ─── Modo simulación ─────────────────────────────────────────────────────────
 // 1 = datos simulados (sin circuito físico)
@@ -28,7 +30,11 @@ MFRC522 rfid(PIN_RFID_SS, PIN_RFID_RST);
 #endif
 
 // ─── Clientes globales ────────────────────────────────────────────────────────
-WiFiClient   wifiClient;
+#if MQTT_TLS
+WiFiClientSecure wifiClient;
+#else
+WiFiClient       wifiClient;
+#endif
 PubSubClient mqtt(wifiClient);
 
 // ─── Estado del ciclo ────────────────────────────────────────────────────────
@@ -245,7 +251,11 @@ void setup() {
   ArduinoOTA.setHostname(CLIENT_ID);
   ArduinoOTA.begin();
 
-  // MQTT
+  // MQTT — TLS
+#if MQTT_TLS
+  wifiClient.setCACert(CA_CERT_PEM);
+  Serial.println("[TLS] Certificado CA cargado");
+#endif
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
   mqtt.setBufferSize(512);
