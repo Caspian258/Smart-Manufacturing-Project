@@ -1,13 +1,21 @@
-# PLACEHOLDER — Reemplazar con el certificado CA real del broker MQTT
-#
-# Cómo obtener el certificado:
-#   En la RPi5 (donde corre Mosquitto):
-#     cat /etc/mosquitto/certs/ca.crt
-#   O desde el cliente:
-#     openssl s_client -connect <IP_RPI5>:8883 -showcerts </dev/null 2>/dev/null \
-#       | openssl x509 -outform PEM
-#
-# Pegar aquí el bloque completo incluyendo:
-# -----BEGIN CERTIFICATE-----
-# ...
-# -----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDiTCCAnGgAwIBAgIUQE5FX/D8cWzEZvyxh6Go4Qrm8jQwDQYJKoZIhvcNAQEL
+BQAwVDELMAkGA1UEBhMCTVgxEjAQBgNVBAgMCVF1ZXJldGFybzEbMBkGA1UECgwS
+U21hcnRNYW51ZmFjdHVyaW5nMRQwEgYDVQQDDAtTbWFydE1mZy1DQTAeFw0yNjA0
+MTAxNDI5MjBaFw0zNjA0MDcxNDI5MjBaMFQxCzAJBgNVBAYTAk1YMRIwEAYDVQQI
+DAlRdWVyZXRhcm8xGzAZBgNVBAoMElNtYXJ0TWFudWZhY3R1cmluZzEUMBIGA1UE
+AwwLU21hcnRNZmctQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCs
+PbXYJ5uGN+dDdK5gDqGFGW8yVftvmPBSxBkbWpR+0UK3mXWuazigYYi35+q4Vu/P
+n+Ksfl8/910JYIG7Mo84CXgCJaKRsadF1FWVOfWALFdSaFhBPPYzPETpY0VtpSd6
+lTqgYeCExYrVuXbNRwgDbhXHzliD1gyMjj6/62jPXcrhPeEcllXLk1Ye1ibTKGkb
+sQL8PjsJwERCvdIDhpoEYYCanPMsGCBfJBZ3C/Jv2Z4SgwB8lW1DnHsueBiaZ9HU
+29RYDQTABQbbNw0yRHzts0b/p98JwyZQwK4eM2KqSfmbrhm7T8CpeG+v5T7dQhZF
+o0K4y+8OGLTYUpFB88D/AgMBAAGjUzBRMB0GA1UdDgQWBBR3ncmKPGzL7ehrzOSF
+MXsNhjnyNzAfBgNVHSMEGDAWgBR3ncmKPGzL7ehrzOSFMXsNhjnyNzAPBgNVHRMB
+Af8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAzJg3CU1J9qHl7tLD1oSVII0Sl
+fbs7CzCUvmSFQoCjQvd+ZynX6GDagv8tRkfVJn7iTnnYGb8LcWxIe8Fvt2v4aa6h
+7v/pgScZqSdPuVNHp4JetbacExTIFpgvBiYNOTYX9wQtjvPTDsTR6nDC0knv7i6s
+0NE681Pp1hvgZoRsoH1wa1Ecx7AVC5LuJHdcmaBNsvoIDxkQBKMP4we0PTKhKRCP
+h++O9efMpvHyqa3yBrZ+770m9Xml++/aVLOHU8bxqtZeNwX/JqiQJlTHX3SLRcai
+u5Owl9ZFNpSJhf76GtTcHUuZqIFIxCZNoZh0WTMW47u9u9PaVYPSZqnobcSX
+-----END CERTIFICATE-----

@@ -2,152 +2,78 @@
 # Orquestador: Claude Code
 # ═══════════════════════════════════════════════════════════════════════
 
-## ENTRADA #010 — MQTT con TLS puerto 8883 — Ciberseguridad Fase 1
+## ENTRADA #011 — MQTT TLS con setCACert() operativo — fix NTP implementado
 - **Fecha**: 2026-04-10
-- **Acción**: Actualización de firmware ESP32-S3 para comunicación MQTT cifrada con TLS
-- **Estado**: ✅ Completado
+- **Acción**: Fix aplicado: `setup()` ahora espera activamente a que NTP sincronice (`time(nullptr) >= 1000000000`) con timeout de 10 s antes de conectar MQTT. Se eliminó `setInsecure()` y se usa `setCACert(CA_CERT_PEM)` para validación real del certificado CA.
+- **Estado**: ✅ Completado — TLS verificado con certificado real
 - **Archivos modificados**:
-  - `firmware/esp32-s3/include/config.h` — `MQTT_PORT` → 8883, nuevo define `MQTT_TLS 1`
-  - `firmware/esp32-s3/src/main.cpp` — `WiFiClientSecure` + `setCACert()` en lugar de `WiFiClient`
-  - `firmware/esp32-s3/platformio.ini` — `extra_scripts = pre:scripts/gen_cert_header.py`
-  - `firmware/esp32-s3/scripts/gen_cert_header.py` — script nuevo: convierte `certs/ca.crt` → `include/ca_cert.h` en build
-  - `firmware/esp32-s3/certs/ca.crt` — placeholder con instrucciones para obtener el cert real
-  - `firmware/esp32-s3/.gitignore` — excluye `include/ca_cert.h` (auto-generado)
-- **Decisión de diseño**: El certificado CA vive en `certs/ca.crt` (gittracked como placeholder).
-  El script de pre-build lo convierte a `include/ca_cert.h` (gitignored) en tiempo de compilación.
-  TLS se puede deshabilitar en config.h con `MQTT_TLS 0` para debug sin cert.
-- **Próximo paso**: Reemplazar `certs/ca.crt` con el cert real del broker Mosquitto de la RPi5,
-  luego habilitar TLS en Mosquitto (puerto 8883) y flashear el ESP32-S3.
+  - `firmware/esp32-s3/src/main.cpp` — bloque NTP blocking wait + setCACert
+  - `firmware/esp32-s3/certs/ca.crt` — certificado CA PEM (actualizado)
+  - `firmware/esp32-s3/platformio.ini` — script inject_env.py + MQTT_TLS=1
+  - `firmware/esp32-s3/scripts/inject_env.py` — inyección de .env como -D flags
+- **Próximo paso**: Cerrar puerto 1883 en Mosquitto una vez validado en producción
+
+### Estado TLS completo
+| Componente | Estado |
+|-----------|--------|
+| Certificados CA + servidor generados en RPi5 | ✅ |
+| SAN con IPs 192.168.100.168, 100.90.158.4, 127.0.0.1 | ✅ |
+| Mosquitto puerto 8883 TLS activo | ✅ |
+| Mosquitto puerto 1883 sin TLS (temporal, pendiente cerrar) | ⚠️ |
+| ca_cert.h generado desde ca.crt real | ✅ |
+| NTP sincroniza antes de reconnectMQTT() | ✅ fix aplicado |
+| ESP32 conecta con setCACert() | ✅ operativo |
+
+### Certificados en RPi5
+| Archivo | Descripción |
+|--------|-------------|
+| `/etc/mosquitto/certs/ca.key` | Clave privada CA |
+| `/etc/mosquitto/certs/ca.crt` | Certificado CA (10 años) |
+| `/etc/mosquitto/certs/server.key` | Clave privada servidor |
+| `/etc/mosquitto/certs/server.crt` | Certificado servidor con SANs |
+
+---
+
+## ENTRADA #010 — MQTT TLS: diagnóstico setCACert falla por NTP
+- **Fecha**: 2026-04-10
+- **Estado**: ✅ Resuelto en ENTRADA #011
+- **Acción**: ESP32 conectaba con setInsecure() al puerto 8883. Detectado: `ssl/tls alert bad certificate` al usar setCACert() — causa: NTP no terminaba antes de reconnectMQTT(), invalidando la fecha del certificado.
 
 ---
 
 ## ENTRADA #009 — Fase A iniciada: Modbus TCP en TIA Portal
 - **Fecha**: 2026-04-09
 - **Estado**: 🔄 En progreso
-- **Acción**: Inicio de implementación de integración PLC S7-1200 → RPi5 por Modbus TCP. Primera tarea: configurar MB_SERVER en TIA Portal y validar conectividad.
-
-### Objetivo de la sesión
-Completar Fase A del plan de integración Celda 3105:
-- Habilitar Modbus TCP en S7-1200 (bloque MB_SERVER, puerto 502)
-- Definir mapa de registros KPIs en `config/plc_registers.md`
-- Instalar `node-red-contrib-modbus` en RPi5
-- Primer dato PLC → InfluxDB
-
-### Próximo paso
-Seguir instrucciones de Fase A1 → A2 → A3 en orden.
+- **Acción**: Inicio de implementación de integración PLC S7-1200 → RPi5 por Modbus TCP.
 
 ---
 
 ## ENTRADA #008 — Plan de integración PLC S7-1200 + Control de acceso Celda 3105
 - **Fecha**: 2026-04-09
 - **Estado**: 📋 Planificado — en ejecución
-- **Acción**: Definido plan de trabajo completo para integrar el PLC Siemens S7-1200 de Celda 3105 al stack RPi5, incluyendo dashboard KPIs y control de acceso innovador con ESP32-CAM.
-
-### Decisiones de diseño
-| Decisión | Elección | Razón |
-|---------|---------|-------|
-| Protocolo PLC | Modbus TCP (→ OPC-UA en Fase 3) | Nativo S7-1200 sin licencia extra; rápido de implementar |
-| Control de acceso | ESP32-CAM + reconocimiento facial | Sin cables al RPi5; WiFi; misma toolchain que ESP32-S3 |
-| Almacenamiento accesos | InfluxDB tag `plant=celda3105` | Reutiliza infraestructura existente; visible en Grafana |
-
-### Plan de fases aprobado
-
-#### Fase A — Conexión PLC → RPi5 (prioridad inmediata)
-| Tarea | Descripción | Entregable |
-|------|-------------|-----------|
-| A1 | Habilitar MB_SERVER en TIA Portal, puerto 502 | PLC respondiendo Modbus TCP |
-| A2 | Instalar `node-red-contrib-modbus`, flujo polling 2 s | Datos PLC en Node-RED |
-| A3 | Definir mapa de 6 KPIs como Holding Registers | `config/plc_registers.md` |
-
-#### Fase B — Dashboard Grafana Celda 3105
-| Tarea | Descripción | Entregable |
-|------|-------------|-----------|
-| B1 | Flujo Node-RED: PLC → InfluxDB (tag celda3105) | `flows/nodered/celda3105_plc.json` |
-| B2 | Dashboard Grafana "Celda 3105" (6 paneles KPI) | `dashboard/celda3105_dashboard.json` |
-| B3 | Dashboard maestro ambas plantas (OEE global) | `dashboard/maestro_dashboard.json` |
-
-#### Fase C — Control de acceso ESP32-CAM (innovación)
-| Tarea | Descripción | Entregable |
-|------|-------------|-----------|
-| C1 | Firmware ESP32-CAM: captura + publica MQTT | `firmware/esp32-cam/src/main.cpp` |
-| C2 | Agente Python: face_recognition → habilita PLC | `agentes/face_access_agent.py` |
-| C3 | Panel Grafana: log de accesos + alertas n8n | Panel en dashboard Celda 3105 |
-
-#### Fase D — Cierre de sesión
-| Tarea | Descripción |
-|------|-------------|
-| D1 | Actualizar bitácora, bump versión, commit + push |
-
-### KPIs definidos para Celda 3105 (Holding Registers)
-| HR | KPI | Unidad | Rango esperado |
-|----|-----|--------|---------------|
-| HR0 | Ciclos completados (sesión) | count | 0–9999 |
-| HR1 | Tiempo de ciclo último | décimas de s | 50–500 |
-| HR2 | Piezas OK acumuladas | count | 0–9999 |
-| HR3 | Piezas NOK acumuladas | count | 0–999 |
-| HR4 | Estado cobot (0=idle, 1=running, 2=fault) | enum | 0/1/2 |
-| HR5 | Número de paros en sesión | count | 0–99 |
-
-### Hardware adicional requerido
-| Componente | Uso | Costo aprox. |
-|-----------|-----|-------------|
-| ESP32-CAM (módulo AI-Thinker) | Control de acceso inalámbrico | ~$8 USD |
-| Alimentación 5V para ESP32-CAM | Panel PLC o adaptador USB | Ya disponible |
-
-### Archivos nuevos a crear
-```
-config/plc_registers.md          ← Mapa Modbus del S7-1200
-flows/nodered/celda3105_plc.json ← Flujo PLC → InfluxDB
-firmware/esp32-cam/              ← Proyecto PlatformIO ESP32-CAM
-  ├── platformio.ini
-  ├── src/main.cpp
-  └── .env.template
-agentes/face_access_agent.py     ← Agente reconocimiento facial
-dashboard/celda3105_dashboard.json
-dashboard/maestro_dashboard.json
-```
 
 ---
 
 ## ENTRADA #007 — Plan de Ciberseguridad e Innovación definido
 - **Fecha**: 2026-03-29
-- **Estado**: 📋 Planificado — pendiente implementación
-- **Acción**: Definida hoja de ruta de ciberseguridad e innovación para Fase 1 mejorada y Fase 3.
+- **Estado**: 📋 Planificado — en ejecución
 
 ### Roadmap de Ciberseguridad (por prioridad)
-| # | Componente | Descripción | Fase |
-|---|-----------|-------------|------|
-| 1 | **MQTT con TLS** | Certificados autofirmados, cifrado ESP32 ↔ RPi5 | 1+ |
-| 2 | **Vault (HashiCorp)** | Gestión centralizada de tokens y secretos | 1+ |
-| 3 | **IDS MQTT** | Agente Python detecta topics/clientes anómalos | 1+ |
-| 4 | **Auth reforzada** | Passwords seguros, auth en Node-RED, roles Grafana | 1+ |
-| 5 | **Anomalías con ML** | TFLite detecta patrones inusuales en consumo | 3 |
-| 6 | **Pasaporte Digital** | QR/RFID con historial completo por pieza | 2 |
-
-### Roadmap de Innovación
-| Componente | Descripción | Fase |
-|-----------|-------------|------|
-| Digital Twin en vivo | Modelo de planta en Node-RED con estado real por máquina | 3 |
-| Detección de anomalías ML | TFLite entrenado con SCT-013, detecta fallas de motor | 3 |
-| Pasaporte Digital de Pieza | Historial RFID: fabricante, energía, Quality Gate | 2 |
-| OEE Predictivo | Predice caída de OEE basado en tendencias energéticas | 3 |
+| # | Componente | Estado |
+|---|-----------|--------|
+| 1 | MQTT con TLS | 🔄 En progreso |
+| 2 | HashiCorp Vault | ⏳ Pendiente |
+| 3 | IDS MQTT | ⏳ Pendiente |
+| 4 | Auth reforzada en servicios | ⏳ Pendiente |
+| 5 | Anomalías con ML | ⏳ Pendiente |
+| 6 | Pasaporte Digital | ⏳ Pendiente |
 
 ---
 
 ## ENTRADA #006 — Grafana operativo con KPIs en tiempo real
 - **Fecha**: 2026-03-29
 - **Estado**: ✅ Completado — HITO FASE 1
-
-### Problemas encontrados y soluciones
-| Problema | Solución |
-|---------|---------|
-| `musl` faltaba como dependencia | `sudo apt-get install -y musl && sudo dpkg --configure grafana` |
-| Puerto 3000 redirigido por Docker | Grafana movido al puerto 3001 en `grafana.ini` |
-
-### Configuración Grafana
 - Puerto: **3001** | URL: `http://192.168.100.168:3001`
-- Datasource: InfluxDB Flux → `smart-manufacturing` / `sensor-data`
-- Auto-refresh: 10s
 
 ---
 
@@ -176,7 +102,7 @@ dashboard/maestro_dashboard.json
 ### Servicios instalados y corriendo
 | Servicio | Puerto | Estado |
 |---------|--------|--------|
-| Mosquitto (MQTT Broker) | 1883 | ✅ active |
+| Mosquitto (MQTT Broker) | 1883 / 8883 | ✅ active |
 | InfluxDB 2.7 | 8086 | ✅ active |
 | Node-RED | 1880 | ✅ active |
 | n8n | 5678 | ✅ active |
@@ -199,7 +125,8 @@ dashboard/maestro_dashboard.json
 - [ ] Probar RC522 RFID — Pasaporte Digital primera pieza
 
 ## PENDIENTES — Fase 1+ (Ciberseguridad)
-- [ ] MQTT con TLS (certificados autofirmados)
+- [x] MQTT con TLS — setCACert() con NTP sincronizado ✅
+- [ ] Cerrar puerto 1883 una vez validado TLS
 - [ ] HashiCorp Vault para gestión de secretos
 - [ ] IDS MQTT — agente de detección de intrusos
 - [ ] Autenticación reforzada en todos los servicios
@@ -236,6 +163,8 @@ dashboard/maestro_dashboard.json
 ## HISTORIAL DE VERSIONES
 | Versión | Fecha | Descripción |
 |---------|-------|-------------|
+| 1.0.0 | 2026-04-10 | MQTT TLS completo con setCACert() — NTP blocking wait implementado |
+| 0.9.0 | 2026-04-10 | MQTT TLS activo en puerto 8883 — setCACert pendiente fix NTP |
 | 0.8.0 | 2026-04-09 | Plan integración PLC S7-1200 Celda 3105 + inicio Fase A |
 | 0.7.0 | 2026-03-29 | Plan ciberseguridad e innovación definido |
 | 0.6.0 | 2026-03-29 | Grafana operativo con KPIs en tiempo real |

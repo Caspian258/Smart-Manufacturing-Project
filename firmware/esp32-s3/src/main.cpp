@@ -8,6 +8,7 @@
  */
 
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
@@ -188,6 +189,52 @@ void onMqttMessage(char* topic, uint8_t* payload, unsigned int len) {
   }
 }
 
+// ─── Helpers WiFi ────────────────────────────────────────────────────────────
+#ifdef WIFI_BSSID
+static uint8_t s_bssid[6];
+static bool    s_bssid_parsed = false;
+
+static bool parseBSSID(const char* str, uint8_t out[6]) {
+  return sscanf(str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+    &out[0],&out[1],&out[2],&out[3],&out[4],&out[5]) == 6;
+}
+#endif
+
+static void wifiBegin() {
+#ifdef WIFI_BSSID
+  if (!s_bssid_parsed)
+    s_bssid_parsed = parseBSSID(WIFI_BSSID, s_bssid);
+  if (s_bssid_parsed) {
+#ifdef WIFI_CHANNEL
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL, s_bssid);
+#else
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD, 0, s_bssid);
+#endif
+    return;
+  }
+#endif
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+}
+
+// ─── Reconexión WiFi ─────────────────────────────────────────────────────────
+void reconnectWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  Serial.print("[WiFi] Reconectando");
+  WiFi.disconnect();
+  wifiBegin();
+  uint8_t attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 3) {
+    delay(500);
+    Serial.print('.');
+    attempts++;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[WiFi] Reconectado → IP: %s\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("\n[WiFi] Sin conexión — continuando sin red");
+  }
+}
+
 // ─── Reconexión MQTT ──────────────────────────────────────────────────────────
 void reconnectMQTT() {
   uint8_t attempts = 0;
@@ -199,7 +246,12 @@ void reconnectMQTT() {
       ledBlink(4, 80);
     } else {
       Serial.printf("[MQTT] Fallo rc=%d — reintento en 5s\n", mqtt.state());
-      delay(5000);
+#if MQTT_TLS
+      char sslErr[128];
+      wifiClient.lastError(sslErr, sizeof(sslErr));
+      Serial.printf("[TLS] mbedTLS: %s\n", sslErr);
+#endif
+      for (uint8_t i = 0; i < 10; i++) { delay(500); esp_task_wdt_reset(); }
       attempts++;
     }
   }
@@ -230,10 +282,10 @@ void setup() {
 #endif
 
   // WiFi
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  wifiBegin();
   Serial.print("[WiFi] Conectando");
   uint8_t attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 24) {
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
     delay(500); Serial.print('.'); attempts++;
   }
   if (WiFi.status() == WL_CONNECTED) {
@@ -243,9 +295,27 @@ void setup() {
     Serial.println("\n[WiFi] Sin conexión — verificar credenciales en .env");
   }
 
-  // NTP
+  // NTP — esperar sincronización antes de validar certificados TLS
   configTime(NTP_UTC_OFFSET_SEC, 0, NTP_SERVER);
-  Serial.println("[NTP] Sincronizando...");
+  Serial.print("[NTP] Sincronizando");
+  {
+    uint32_t ntpStart = millis();
+    time_t now = 0;
+    while (now < 1000000000UL && millis() - ntpStart < 10000) {
+      delay(200);
+      Serial.print('.');
+      now = time(nullptr);
+    }
+    if (now >= 1000000000UL) {
+      struct tm t;
+      gmtime_r(&now, &t);
+      char buf[32];
+      strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &t);
+      Serial.printf("\n[NTP] OK → %s\n", buf);
+    } else {
+      Serial.println("\n[NTP] TIMEOUT — TLS puede fallar por tiempo inválido");
+    }
+  }
 
   // OTA
   ArduinoOTA.setHostname(CLIENT_ID);
@@ -253,6 +323,7 @@ void setup() {
 
   // MQTT — TLS
 #if MQTT_TLS
+  wifiClient.setHandshakeTimeout(30);
   wifiClient.setCACert(CA_CERT_PEM);
   Serial.println("[TLS] Certificado CA cargado");
 #endif
@@ -268,7 +339,8 @@ void setup() {
 void loop() {
   ArduinoOTA.handle();
 
-  if (!mqtt.connected()) reconnectMQTT();
+  if (WiFi.status() != WL_CONNECTED) reconnectWiFi();
+  if (WiFi.status() == WL_CONNECTED && !mqtt.connected()) reconnectMQTT();
   mqtt.loop();
 
   uint32_t now = millis();
