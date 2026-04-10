@@ -2,6 +2,52 @@
 # Orquestador: Claude Code
 # ═══════════════════════════════════════════════════════════════════════
 
+## ENTRADA #015 — Auditoría de autenticación RPi5 — diagnóstico completo
+- **Fecha**: 2026-04-10
+- **Acción**: Revisión vía SSH del estado de auth en los 5 servicios del stack RPi5. Solo diagnóstico — sin cambios.
+- **Estado**: ✅ Completado — hallazgos documentados, Fase 2 pendiente
+
+### Resultados por servicio
+| Servicio | Puerto | Auth | Credenciales | Riesgo |
+|---------|--------|------|--------------|--------|
+| Node-RED | 1880 | ❌ Sin auth | `adminAuth` comentado en settings.js | 🔴 ALTO |
+| Grafana | 3001 | ✅ Login activo | `admin/admin` — password default | 🔴 ALTO |
+| n8n | 5678 | ✅ Basic Auth | `admin/SmartMfg2024!` — personalizada | 🟢 OK |
+| InfluxDB | 8086 | ✅ Token auth | admin token configurado | 🟢 OK |
+| Mosquitto | 1883 | ✅ usuario/pass | Sin TLS — temporal | 🟡 MEDIO |
+| Mosquitto | 8883 | ✅ usuario/pass + TLS | Cifrado activo | 🟢 OK |
+
+### Hallazgo crítico: bloqueo para cerrar puerto 1883
+Node-RED y n8n se conectan a Mosquitto en `localhost:1883`. Cerrar el 1883 sin migrarlos **rompe todo el pipeline**. Orden correcto para Fase 2:
+1. Activar auth en Node-RED y Grafana
+2. Migrar conexiones MQTT de Node-RED y n8n → `localhost:8883`
+3. Verificar pipeline completo funcionando
+4. Cerrar puerto 1883 en Mosquitto
+
+---
+
+## ENTRADA #014 — Auditoría Fase 1 del repositorio — inventario y código muerto
+- **Fecha**: 2026-04-10
+- **Acción**: Auditoría completa del repositorio. Inventario de todos los archivos. Identificación de código muerto e inactivo en main.cpp y config.h.
+- **Estado**: ✅ Completado — sin cambios aplicados todavía
+
+### Hallazgos en firmware
+| Ítem | Ubicación | Tipo | Decisión |
+|------|-----------|------|---------|
+| `#include "ca_cert.h"` | main.cpp:20 | Include sin uso (CA_CERT_PEM no se referencia) | ⚠️ Pendiente decisión |
+| `TOPIC_RFID` | config.h:38 | Define huérfano — nunca referenciado | ❌ Eliminar en Fase 2 |
+| Macro `LOG()` | config.h:40-43 | `DEBUG_MODE` nunca definido — macro muerta | ❌ Eliminar o activar |
+| `#if SIMULATION_MODE == 0` | main.cpp (4 bloques) | Código futuro SCT-013 + RC522 | ✅ Mantener |
+| `setInsecure()` x2 | main.cpp:261,365 | Segunda llamada redundante | ⚠️ Inofensivo |
+| Print debug TLS | main.cpp:274 | Ruido en producción | ⚠️ Mover a DEBUG_MODE |
+
+### Hallazgos en estructura
+- `docs/` vacío — gantt.md referenciado en CLAUDE.md pero no existe
+- `flows/` limpio: 2 archivos activos (n8n + Node-RED)
+- `scripts/` limpio: 3 scripts activos, sin legacy
+
+---
+
 ## ENTRADA #013 — ESP32 → RPi5 operativo via MQTT-TLS puerto 8883
 - **Fecha**: 2026-04-10
 - **Acción**: ESP32 publica datos de energía cada 5s al broker MQTT en la RPi5 por puerto 8883 con TLS (cifrado en tránsito). Validación de certificado CA pendiente por bug en ESP32 Arduino 3.x / ESP-IDF 5.x.
@@ -168,10 +214,14 @@
 
 ## PENDIENTES — Fase 1+ (Ciberseguridad)
 - [x] MQTT con TLS — setCACert() con NTP sincronizado ✅
-- [ ] Cerrar puerto 1883 una vez validado TLS
+- [x] Auditoría de autenticación en todos los servicios ✅
+- [ ] **Fase 2 auth** — Node-RED: activar adminAuth en settings.js
+- [ ] **Fase 2 auth** — Grafana: cambiar password de admin (actualmente `admin/admin`)
+- [ ] **Fase 2 auth** — n8n: evaluar migración de Basic Auth a auth nativa
+- [ ] **Fase 2 MQTT** — Migrar Node-RED y n8n de localhost:1883 → localhost:8883
+- [ ] **Fase 2 MQTT** — Cerrar puerto 1883 (solo después de migrar Node-RED y n8n)
 - [ ] HashiCorp Vault para gestión de secretos
 - [ ] IDS MQTT — agente de detección de intrusos
-- [ ] Autenticación reforzada en todos los servicios
 
 ## PENDIENTES — Fase A: Conexión PLC S7-1200 → RPi5
 - [ ] A1 — Habilitar MB_SERVER en TIA Portal (puerto 502)
@@ -205,6 +255,8 @@
 ## HISTORIAL DE VERSIONES
 | Versión | Fecha | Descripción |
 |---------|-------|-------------|
+| 1.2.0 | 2026-04-10 | Auditoría auth RPi5 — diagnóstico completo, Fase 2 definida |
+| 1.1.5 | 2026-04-10 | Auditoría Fase 1 repositorio — inventario y código muerto identificado |
 | 1.1.0 | 2026-04-10 | ESP32 → RPi5 operativo MQTT-TLS — datos en tiempo real |
 | 1.0.1 | 2026-04-10 | Auditoría firmware — 6 correcciones robustez/seguridad |
 | 1.0.0 | 2026-04-10 | MQTT TLS completo con setCACert() — NTP blocking wait implementado |
